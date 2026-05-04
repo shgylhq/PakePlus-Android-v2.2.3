@@ -1,11 +1,307 @@
 <!DOCTYPE html>
-<html lang="en">
-    <head>
-        <meta charset="UTF-8" />
-        <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-        <title>PakePlus</title>
-    </head>
-    <body>
-        PakePlus
-    </body>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>记忆曲线复习助手</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <style>
+        body { background-color: #f3f4f6; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif; }
+        /* 隐藏滚动条但保留滚动功能 */
+        .no-scrollbar::-webkit-scrollbar { display: none; }
+        .no-scrollbar { -ms-overflow-style: none; scrollbar-width: none; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect } = React;
+
+        // 艾宾浩斯复习间隔（天）
+        const EBBINGHAUS_INTERVALS = [1, 2, 4, 7, 15, 30];
+
+        // 格式化日期 YYYY-MM-DD
+        const formatDate = (date) => {
+            const d = new Date(date);
+            return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+        };
+
+        const App = () => {
+            const [activeTab, setActiveTab] = useState('today');
+            const [learningItems, setLearningItems] = useState([]);
+            const [newItemName, setNewItemName] = useState('');
+
+            // 初始化加载本地数据
+            useEffect(() => {
+                const savedData = localStorage.getItem('ebbinghaus_data');
+                if (savedData) {
+                    try {
+                        setLearningItems(JSON.parse(savedData));
+                    } catch (e) {
+                        console.error("解析本地数据失败", e);
+                    }
+                }
+            }, []);
+
+            // 监听数据变化并保存
+            useEffect(() => {
+                localStorage.setItem('ebbinghaus_data', JSON.stringify(learningItems));
+            }, [learningItems]);
+
+            // 添加新学习内容
+            const handleAddItem = (e) => {
+                e.preventDefault();
+                if (!newItemName.trim()) return;
+
+                const today = new Date();
+                const todayStr = formatDate(today);
+                
+                const reviews = EBBINGHAUS_INTERVALS.map(interval => {
+                    const targetDate = new Date(today);
+                    targetDate.setDate(today.getDate() + interval);
+                    return {
+                        interval: interval,
+                        targetDate: formatDate(targetDate),
+                        completed: false
+                    };
+                });
+
+                const newItem = {
+                    id: Date.now().toString(),
+                    name: newItemName.trim(),
+                    createdAt: todayStr,
+                    reviews: reviews
+                };
+
+                setLearningItems([newItem, ...learningItems]);
+                setNewItemName('');
+                setActiveTab('today');
+            };
+
+            // 标记复习任务完成/取消完成
+            const toggleReviewStatus = (itemId, interval) => {
+                const updatedItems = learningItems.map(item => {
+                    if (item.id === itemId) {
+                        const updatedReviews = item.reviews.map(review => {
+                            if (review.interval === interval) {
+                                return { ...review, completed: !review.completed };
+                            }
+                            return review;
+                        });
+                        return { ...item, reviews: updatedReviews };
+                    }
+                    return item;
+                });
+                setLearningItems(updatedItems);
+            };
+
+            // 删除学习记录
+            const deleteItem = (itemId) => {
+                if(window.confirm('确定要删除这条学习记录吗？')) {
+                    setLearningItems(learningItems.filter(item => item.id !== itemId));
+                }
+            };
+
+            // 导出数据
+            const handleExport = () => {
+                const dataStr = JSON.stringify(learningItems, null, 2);
+                const blob = new Blob([dataStr], { type: "application/json" });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = `复习数据导出_${formatDate(new Date())}.json`;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                URL.revokeObjectURL(url);
+            };
+
+            // 导入数据
+            const handleImport = (e) => {
+                const file = e.target.files[0];
+                if (!file) return;
+                const reader = new FileReader();
+                reader.onload = (event) => {
+                    try {
+                        const importedData = JSON.parse(event.target.result);
+                        if (Array.isArray(importedData)) {
+                            setLearningItems(importedData);
+                            alert('数据导入成功！');
+                        } else {
+                            alert('数据格式不正确');
+                        }
+                    } catch (error) {
+                        alert('解析文件失败，请确保是正确的 JSON 文件');
+                    }
+                };
+                reader.readAsText(file);
+                e.target.value = ''; // 重置 input
+            };
+
+            // 筛选今日需要复习的内容
+            const todayStr = formatDate(new Date());
+            const todayTasks = [];
+            
+            learningItems.forEach(item => {
+                item.reviews.forEach(review => {
+                    // 如果复习日期是今天，或者是过去未完成的任务（防漏补复习）
+                    if (review.targetDate <= todayStr && !review.completed) {
+                        todayTasks.push({
+                            itemId: item.id,
+                            itemName: item.name,
+                            ...review
+                        });
+                    }
+                });
+            });
+
+            return (
+                <div className="flex flex-col h-screen max-w-md mx-auto bg-white shadow-xl overflow-hidden relative">
+                    {/* 头部区域 */}
+                    <header className="bg-blue-600 text-white p-5 shadow-md z-10">
+                        <h1 className="text-xl font-bold tracking-wider">复习助手 (Ebbinghaus)</h1>
+                        <p className="text-blue-100 text-sm mt-1">今日是 {todayStr}</p>
+                    </header>
+
+                    {/* 主体内容滚动区 */}
+                    <main className="flex-1 overflow-y-auto no-scrollbar p-4 pb-24">
+                        
+                        {/* Tab: 今日复习 */}
+                        {activeTab === 'today' && (
+                            <div className="space-y-4 animate-fade-in">
+                                <h2 className="text-lg font-semibold text-gray-800 border-l-4 border-blue-500 pl-2">今日待复习 ({todayTasks.length})</h2>
+                                {todayTasks.length === 0 ? (
+                                    <div className="text-center py-10 text-gray-400">
+                                        <div className="text-4xl mb-2">🎉</div>
+                                        <p>太棒了！今日复习任务已全部清空</p>
+                                    </div>
+                                ) : (
+                                    <div className="space-y-3">
+                                        {todayTasks.map(task => (
+                                            <div key={`${task.itemId}-${task.interval}`} className="bg-white border border-gray-100 p-4 rounded-xl shadow-sm flex items-center justify-between">
+                                                <div>
+                                                    <h3 className="font-medium text-gray-800">{task.itemName}</h3>
+                                                    <p className="text-xs text-red-400 mt-1">
+                                                        第 {task.interval} 天复习节点
+                                                        {task.targetDate < todayStr && " (已逾期)"}
+                                                    </p>
+                                                </div>
+                                                <button 
+                                                    onClick={() => toggleReviewStatus(task.itemId, task.interval)}
+                                                    className="w-8 h-8 rounded-full border-2 border-blue-500 flex items-center justify-center text-blue-500 active:bg-blue-100 transition"
+                                                >
+                                                    {/* 未完成的圆圈 */}
+                                                </button>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                        )}
+
+                        {/* Tab: 录入新内容 */}
+                        {activeTab === 'add' && (
+                            <div className="space-y-4">
+                                <h2 className="text-lg font-semibold text-gray-800 border-l-4 border-green-500 pl-2">录入今日学习</h2>
+                                <form onSubmit={handleAddItem} className="bg-gray-50 p-4 rounded-xl border border-gray-100">
+                                    <input 
+                                        type="text" 
+                                        value={newItemName}
+                                        onChange={(e) => setNewItemName(e.target.value)}
+                                        placeholder="例如：行测常识 - 经济篇" 
+                                        className="w-full px-4 py-3 rounded-lg border border-gray-300 focus:outline-none focus:ring-2 focus:ring-green-500 focus:border-transparent transition mb-4"
+                                    />
+                                    <button 
+                                        type="submit" 
+                                        className="w-full bg-green-500 text-white font-medium py-3 rounded-lg active:bg-green-600 transition"
+                                    >
+                                        生成复习计划
+                                    </button>
+                                </form>
+                                <div className="text-xs text-gray-400 text-center mt-2">
+                                    系统将自动安排 1, 2, 4, 7, 15, 30 天后的复习提醒
+                                </div>
+                            </div>
+                        )}
+
+                        {/* Tab: 全部记录与数据 */}
+                        {activeTab === 'all' && (
+                            <div className="space-y-6">
+                                <div>
+                                    <h2 className="text-lg font-semibold text-gray-800 border-l-4 border-purple-500 pl-2 mb-4">全部学习记录</h2>
+                                    <div className="space-y-4">
+                                        {learningItems.map(item => (
+                                            <div key={item.id} className="bg-white border border-gray-100 p-4 rounded-xl shadow-sm relative">
+                                                <button onClick={() => deleteItem(item.id)} className="absolute top-4 right-4 text-gray-300 hover:text-red-500 text-sm">删除</button>
+                                                <h3 className="font-medium text-gray-800 mb-1">{item.name}</h3>
+                                                <p className="text-xs text-gray-400 mb-3">学习日期: {item.createdAt}</p>
+                                                <div className="flex flex-wrap gap-2">
+                                                    {item.reviews.map(review => (
+                                                        <span key={review.interval} className={`text-[10px] px-2 py-1 rounded-full ${review.completed ? 'bg-green-100 text-green-700' : 'bg-gray-100 text-gray-500'}`}>
+                                                            {review.interval}天: {review.targetDate.slice(5)}
+                                                        </span>
+                                                    ))}
+                                                </div>
+                                            </div>
+                                        ))}
+                                        {learningItems.length === 0 && <p className="text-center text-gray-400 py-4">暂无记录</p>}
+                                    </div>
+                                </div>
+
+                                <hr className="border-gray-200" />
+
+                                <div>
+                                    <h2 className="text-lg font-semibold text-gray-800 border-l-4 border-gray-500 pl-2 mb-4">数据管理</h2>
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <button onClick={handleExport} className="bg-blue-50 text-blue-600 border border-blue-200 py-3 rounded-lg font-medium text-sm">
+                                            导出 JSON 数据
+                                        </button>
+                                        <label className="bg-purple-50 text-purple-600 border border-purple-200 py-3 rounded-lg font-medium text-sm text-center flex items-center justify-center cursor-pointer">
+                                            <span>导入 JSON 数据</span>
+                                            <input type="file" accept=".json" onChange={handleImport} className="hidden" />
+                                        </label>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+                    </main>
+
+                    {/* 底部导航栏 */}
+                    <nav className="absolute bottom-0 w-full bg-white border-t border-gray-200 flex justify-around items-center pb-safe z-20">
+                        <button 
+                            onClick={() => setActiveTab('today')} 
+                            className={`flex flex-col items-center p-3 flex-1 ${activeTab === 'today' ? 'text-blue-600' : 'text-gray-400'}`}
+                        >
+                            <svg className="w-6 h-6 mb-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2M9 5a2 2 0 002 2h2a2 2 0 002-2M9 5a2 2 0 012-2h2a2 2 0 012 2m-6 9l2 2 4-4" /></svg>
+                            <span className="text-xs font-medium">今日复习</span>
+                        </button>
+                        <button 
+                            onClick={() => setActiveTab('add')} 
+                            className={`flex flex-col items-center p-3 flex-1 ${activeTab === 'add' ? 'text-green-600' : 'text-gray-400'}`}
+                        >
+                            <div className={`w-10 h-10 -mt-6 rounded-full flex items-center justify-center text-white shadow-lg ${activeTab === 'add' ? 'bg-green-600' : 'bg-green-500'}`}>
+                                <svg className="w-6 h-6" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" /></svg>
+                            </div>
+                            <span className="text-xs font-medium mt-1">录入</span>
+                        </button>
+                        <button 
+                            onClick={() => setActiveTab('all')} 
+                            className={`flex flex-col items-center p-3 flex-1 ${activeTab === 'all' ? 'text-purple-600' : 'text-gray-400'}`}
+                        >
+                            <svg className="w-6 h-6 mb-1" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 10h16M4 14h16M4 18h16" /></svg>
+                            <span className="text-xs font-medium">全部/管理</span>
+                        </button>
+                    </nav>
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
 </html>
